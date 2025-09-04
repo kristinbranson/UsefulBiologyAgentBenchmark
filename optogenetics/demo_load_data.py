@@ -218,7 +218,6 @@ maxval = np.nanmax(mean_mind)*1.1
 # plot indicator data as patches
 for st,et in zip(inddata['indicatorLED']['starttimes'].flatten(), inddata['indicatorLED']['endtimes'].flatten()):
     # draw a rectangle from st to et, height 0 to maxval
-    print(st,et)
     rect = plt.matplotlib.patches.Rectangle((st,0), et-st, maxval,
                                            facecolor='red', alpha=0.3)
     ax.add_patch(rect)   
