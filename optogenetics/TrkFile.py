@@ -2644,7 +2644,6 @@ def load_trx(trxfile):
     scalarkeys = ['firstframe','endframe','nframes']
     trx = {}
     for k in ks:
-        print(f'Processing key {k}')
         if k in scalarkeys:
             trx[k] = np.array([x.item() for x in td['trx'][k]])
         elif k == 'sex':
@@ -2658,18 +2657,21 @@ def load_trx(trxfile):
             
     trx['x'] = to_py(trx['x'])
     trx['y'] = to_py(trx['y'])
-    trx['startframes'] = to_py(trx['startframes'])
-    trx['endframes'] = to_py(trx['endframes'])
-    trx['nframes'] = trx['endframes']-trx['startframes']+1
+    trx['firstframe'] = to_py(trx['firstframe'].astype(int))
+    trx['endframe'] = to_py(trx['endframe'].astype(int))
+    trx['nframes'] = trx['endframe']-trx['firstframe']+1
+    trx['ntargets'] = len(trx['x'])
+    trx['timestamps'] = td['timestamps']
 
     return trx
 
 def load_perframedata(pffile):
-    pfd=loadmat(pffile)
+    pfd,_=loadmat(pffile)
     ntargets = pfd['data'].size
     data = [None,]*ntargets
     for itgt in range(ntargets):
         data[itgt] = pfd['data'][0,itgt].flatten()
+    units = pfd['units']
     return data
     
 def load_trk(trkfile):

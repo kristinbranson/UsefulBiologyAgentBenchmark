@@ -20,13 +20,16 @@ def hdf5_to_dict(obj, h5file=None):
     if isinstance(obj, h5py._hl.dataset.Dataset):
 
         if 'Python.Type' in obj.attrs:
-            type_map = {b'bool': bool, b'int': int, b'float': float}
-            if obj.attrs['Python.Type'] == b'str':
-                return u''.join([chr(t) for t in obj])
+            type_map = {b'bool': bool, b'int': int, b'float': float, b'str': str}
             if obj.attrs['Python.Type'] in type_map.keys():
                 return type_map[obj.attrs['Python.Type']](obj[()])
-            if obj.attrs['Python.Type'] == b'numpy.ndarray' and 'Python.Empty' in obj.attrs and obj.attrs['Python.Empty'] == 1:
-                return np.zeros(0)
+            if obj.attrs['Python.Type'] == b'builtins.NoneType':
+                return None
+            if obj.attrs['Python.Type'] == b'numpy.ndarray':
+                if 'Python.Empty' in obj.attrs and obj.attrs['Python.Empty'] == 1:
+                    return np.zeros(0)
+                else:
+                    return obj[()].T # god knows why we are transposing...
             if obj.attrs['Python.Type'] in [b'list', b'tuple']:
                 # Handle complex Python list/tuple types
                 if 'Python.Empty' in obj.attrs and obj.attrs['Python.Empty'] == 1:
@@ -43,8 +46,7 @@ def hdf5_to_dict(obj, h5file=None):
                 # Handle numpy scalar containers
                 out = np.array(obj[()].flatten())
                 return out
-
-            raise ValueError(f"Unsupported Python.Type {obj.attrs['Python.Type']}")
+            return obj[()]
 
         # Handle simple MATLAB numeric types
         if obj.dtype.kind in ['f', 'i', 'u', 'b']:  # float, int, uint, bool
