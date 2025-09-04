@@ -1,0 +1,16 @@
+name: scibench
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.13.7
+  - ipython=9.5.0
+  - ipykernel=6.30.1
+  - numpy=2.3.2
+  - scipy=1.16.1
+  - matplotlib=3.10.6
+  - h5py=3.14.0
+  - hdf5=1.14.6
+  - opencv=4.12.0
+  - tqdm=4.67.1
+  - setuptools=80.9.0

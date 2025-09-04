@@ -121,6 +121,8 @@ def savemat(matfile, data, matfiletype='scipy'):
     if matfiletype == 'scipy':
         scipy.io.savemat(matfile, data, appendmat=False)
     elif matfiletype == 'hdf5storage':
+        # hdf5storage hasn't been updated in a long time, we should probably 
+        # switch to h5py. it relies on setuptools which is deprecated.
         hdf5storage.savemat(matfile,data,appendmat=False,truncate_existing=True)
     else:
         raise ValueError(f'Unknown matfiletype {matfiletype}')

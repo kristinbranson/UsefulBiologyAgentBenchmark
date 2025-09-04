@@ -9,7 +9,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.11.2
 #   kernelspec:
-#     display_name: APT
+#     display_name: scibench
 #     language: python
 #     name: python3
 # ---
@@ -24,9 +24,20 @@ import movies
 import TrkFile
 import numpy as np
 import os
+import matplotlib
 import matplotlib.pyplot as plt
+import sys
 
+# configure matplotlib 
 
+# Check if running in IPython/Jupyter environment
+try:
+    __IPYTHON__
+    # In notebook - use inline backend
+    matplotlib.use('module://matplotlib_inline.backend_inline')
+except NameError:
+    # Command line - use interactive backend
+    matplotlib.use('TkAgg')
 
 # %%
 # locations of data
@@ -54,6 +65,7 @@ im,timestamp = movieobj.get_frame(f)
 fig,ax = plt.subplots(1,1, figsize=(12,12))
 ax.imshow(im, cmap='gray', vmin=0, vmax=255)
 ax.set_title(f'Frame {f}, timestamp {timestamp:.3f} s')
+plt.show()
 movieobj.close()
 
 # %%
@@ -88,6 +100,7 @@ for fly in range(trx['ntargets']):
     ywingr = trx['ywingr'][fly][i]
     ax.plot([xwingl,x,xwingr], [ywingl,y,ywingr], color=colors(fly), lw=2)
 ax.set_title(f'Frame {f}, timestamp {timestamp:.3f} s')
+plt.show()
 
 # plot speed of each fly in mm/s
 maxspeed = 50 # mm/s
@@ -106,6 +119,7 @@ ax[-1].set_ylabel('Speed (mm/s)')
 ax[-1].set_xlabel('Time (s)')
 ax[-1].set_ylim(0, maxspeed)
 fig.tight_layout()
+plt.show()
 
 # %%
 # load in apt tracking data
@@ -120,6 +134,7 @@ ax.imshow(im, cmap='gray', vmin=0, vmax=255)
 p = apttrk.getframe(f) # p is nkeypoints x 2 x len(f) x nflies
 for fly in range(apttrk.ntargets):
     ax.plot(p[:,0,0,fly], p[:,1,0,fly], '.', color=colors(fly), lw=2)
+plt.show()
 
 # %%
 # load indicator data
@@ -133,6 +148,7 @@ fig,ax = plt.subplots(1,1, figsize=(12,4))
 ax.plot(trx['timestamps'],inddata['indicatorLED']['indicatordigital'],'k.')
 ax.set_xlabel('Time (s)')
 ax.set_ylabel('Indicator LED digital value')
+plt.show()
 
 # %%
 # load a per-frame feature
@@ -165,7 +181,6 @@ maxval = np.nanmax(mean_pd)*1.1
 # plot indicator data as patches
 for st,et in zip(inddata['indicatorLED']['starttimes'].flatten(), inddata['indicatorLED']['endtimes'].flatten()):
     # draw a rectangle from st to et, height 0 to maxval
-    print(st,et)
     rect = plt.matplotlib.patches.Rectangle((st,0), et-st, maxval,
                                            facecolor='red', alpha=0.3)
     ax.add_patch(rect)   
@@ -173,6 +188,7 @@ for st,et in zip(inddata['indicatorLED']['starttimes'].flatten(), inddata['indic
 ax.plot(trx['timestamps'], mean_pd, 'k-', lw=2)
 ax.set_ylabel(featurename)
 ax.set_xlabel('Time (s)')
+plt.show()
 
 
 # %%
@@ -208,3 +224,4 @@ for st,et in zip(inddata['indicatorLED']['starttimes'].flatten(), inddata['indic
     ax.add_patch(rect)   
 
 ax.plot(trx['timestamps'], mean_mind, 'k-', lw=2)
+plt.show()
