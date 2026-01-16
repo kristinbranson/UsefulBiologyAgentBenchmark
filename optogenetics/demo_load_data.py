@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # ---
 # jupyter:
 #   jupytext:
@@ -167,16 +168,21 @@ fig,ax = plt.subplots(1,1, figsize=(12,4))
 # plot per-frame data
 mean_pd = np.zeros(T)
 count = np.zeros(T)
+sig_pd = np.zeros(T)
 for fly in range(trx['ntargets']):
     datacurr = perframedata[fly] # data is 1 x T_fly
     f0 = trx['firstframe'][fly]
     n = datacurr.size
     mean_pd[f0:f0+n] += datacurr
+    sig_pd[f0:f0+n] += datacurr**2.
     count[f0:f0+n+1] += 1
+    maxval = max(maxval, np.nanmax(datacurr))
 mean_pd /= np.maximum(count,1)
 mean_pd[count==0] = np.nan
-
-maxval = np.nanmax(mean_pd)*1.1
+sig_pd = np.sqrt( np.maximum( sig_pd / np.maximum(count,1) - mean_pd**2., 0. ) )
+sig_pd[count==0] = np.nan
+se_pd = sig_pd / np.sqrt( np.maximum(count,1) )
+maxval = np.nanmax(mean_pd + se_pd)*1.1
 
 # plot indicator data as patches
 for st,et in zip(inddata['indicatorLED']['starttimes'].flatten(), inddata['indicatorLED']['endtimes'].flatten()):
@@ -185,15 +191,32 @@ for st,et in zip(inddata['indicatorLED']['starttimes'].flatten(), inddata['indic
                                            facecolor='red', alpha=0.3)
     ax.add_patch(rect)   
 
-ax.plot(trx['timestamps'], mean_pd, 'k-', lw=2)
+
+# plot standard deviation
+ax.fill_between(trx['timestamps'][:,0], mean_pd - se_pd, mean_pd + se_pd,
+                color='gray', alpha=0.4, label='Mean ± SE')
+
+# for fly in range(trx['ntargets']):
+#     datacurr = perframedata[fly] # data is 1 x T_fly
+#     f0 = trx['firstframe'][fly]
+#     n = datacurr.size
+#     ax.plot(trx['timestamps'][f0:f0+n], datacurr, 'k-', lw=1, alpha=0.1)
+
+ax.plot(trx['timestamps'], mean_pd, 'k-', lw=2, label='Mean')
 ax.set_ylabel(featurename)
 ax.set_xlabel('Time (s)')
+ax.set_ylim(0,maxval)
+ax.legend(loc='upper right')
 plt.show()
+
+fig.savefig(f'{featurename}_with_indicator.svg')
+fig.savefig(f'{featurename}_with_indicator.png')
 
 
 # %%
 # plot minimum distance between flies based on all keypoints
 mean_mind = np.zeros(apttrk.T1+1)
+sig_mind = np.zeros(apttrk.T1+1)
 count = np.zeros(apttrk.T1+1)
 for fly in range(apttrk.ntargets):
     mind = np.inf
@@ -207,13 +230,18 @@ for fly in range(apttrk.ntargets):
         mind = np.minimum(mind, dcurr)
     isvalid = TrkFile.real_idx(pcurr)
     mean_mind[isvalid] += mind[isvalid]
+    sig_mind[isvalid] += mind[isvalid]**2.
+    
     count[isvalid] += 1
 
 mean_mind /= np.maximum(count,1)
 mean_mind[count==0] = np.nan
+sig_mind = np.sqrt( np.maximum( sig_mind / np.maximum(count,1) - mean_mind**2., 0. ) )
+sig_mind[count==0] = np.nan
+se_mind = sig_mind / np.sqrt( np.maximum(count,1) )
 
 fig,ax = plt.subplots(1,1, figsize=(12,4))
-maxval = np.nanmax(mean_mind)*1.1
+maxval = np.nanmax(mean_mind+se_mind)*1.1
 
 # plot indicator data as patches
 for st,et in zip(inddata['indicatorLED']['starttimes'].flatten(), inddata['indicatorLED']['endtimes'].flatten()):
@@ -222,5 +250,10 @@ for st,et in zip(inddata['indicatorLED']['starttimes'].flatten(), inddata['indic
                                            facecolor='red', alpha=0.3)
     ax.add_patch(rect)   
 
-ax.plot(trx['timestamps'], mean_mind, 'k-', lw=2)
+ax.fill_between(trx['timestamps'][:,0], mean_mind - se_mind, mean_mind + se_mind,
+                color='gray', alpha=0.4, label='Mean ± SE')
+
+ax.plot(trx['timestamps'], mean_mind, 'k-', lw=2, label='Mean')
+ax.legend(loc='upper right')
+ax.set_ylim(0, maxval)
 plt.show()

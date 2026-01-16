@@ -20,9 +20,15 @@ def hdf5_to_dict(obj, h5file=None):
     if isinstance(obj, h5py._hl.dataset.Dataset):
 
         if 'Python.Type' in obj.attrs:
-            type_map = {b'bool': bool, b'int': int, b'float': float, b'str': str}
+            type_map = {b'bool': bool, b'int': int, b'float': float}
             if obj.attrs['Python.Type'] in type_map.keys():
                 return type_map[obj.attrs['Python.Type']](obj[()])
+            if obj.attrs['Python.Type'] == b'str':
+                # MATLAB char arrays stored as uint16, decode properly
+                if obj.dtype in ['<u2', 'uint16']:
+                    return "".join([chr(t) for t in obj[()].flat])
+                else:
+                    return str(obj[()])
             if obj.attrs['Python.Type'] == b'builtins.NoneType':
                 return None
             if obj.attrs['Python.Type'] == b'numpy.ndarray':
@@ -48,13 +54,13 @@ def hdf5_to_dict(obj, h5file=None):
                 return out
             return obj[()]
 
+        # Handle unicode strings (must check BEFORE numeric types since uint16 is 'u')
+        if obj.dtype == '<u2' and obj.size == max(obj.shape):
+            return "".join([chr(t) for t in obj[()].flat])
+
         # Handle simple MATLAB numeric types
         if obj.dtype.kind in ['f', 'i', 'u', 'b']:  # float, int, uint, bool
             return obj[()]
-    
-        # Handle unicode strings  
-        if obj.dtype == '<u2' and obj.size == max(obj.shape):
-            return "".join([chr(t) for t in obj[()].flat])
             
         # Handle matlab object array
         if obj.dtype == 'O':
@@ -103,26 +109,173 @@ def loadmat(matfile):
         f.close()
         datatype = 'h5py'    
     except:
-        ValueError(f'could not read mat file {matfile}')
+        data = None
+        datatype = None
+        raise ValueError(f'could not read mat file {matfile}')
         
     return data, datatype
 
+def _is_uint16_string(arr):
+    """Check if a numpy array is likely a MATLAB string (uint16 character codes)."""
+    if not isinstance(arr, np.ndarray):
+        return False
+    if arr.dtype not in [np.uint16, np.uint8]:
+        return False
+    # Check if values are valid ASCII/Unicode characters
+    flat = arr.flatten()
+    if len(flat) == 0:
+        return False
+    # Most printable characters are in range 32-126, but allow wider range for unicode
+    return all(0 <= c < 65536 for c in flat)
+
+
+def _uint16_to_string(arr):
+    """Convert uint16 array to Python string."""
+    return ''.join(chr(c) for c in np.array(arr).flatten())
+
+
+def _prepare_for_hdf5storage(obj, transpose_arrays=True, is_top_level=False):
+    """
+    Recursively prepare data for saving with hdf5storage.
+
+    Handles:
+    - Transposing arrays to counteract hdf5storage's transpose behavior
+    - Converting uint16 character arrays back to Python strings
+    - Converting dict-of-lists (struct with cell arrays) to struct arrays
+
+    Args:
+        obj: Python object to prepare
+        transpose_arrays: whether to transpose 2D arrays (default True)
+        is_top_level: whether this is the top-level dict (should not be converted to struct array)
+
+    Returns:
+        Prepared object ready for hdf5storage.savemat
+    """
+    if isinstance(obj, str):
+        return obj
+
+    if isinstance(obj, np.ndarray):
+        # Check if this is a string stored as uint16
+        if _is_uint16_string(obj) and obj.size < 10000:  # reasonable string length
+            # Heuristic: if it looks like printable text, convert to string
+            try:
+                s = _uint16_to_string(obj)
+                if s.isprintable() or all(c.isprintable() or c in '\n\r\t' for c in s):
+                    return s
+            except:
+                pass
+
+        # Transpose arrays to counteract hdf5storage's dimension reversal
+        # hdf5storage reverses all dimensions when saving
+        if transpose_arrays and obj.ndim >= 2 and obj.size > 1:
+            # Reverse all dimensions
+            return np.transpose(obj, axes=tuple(range(obj.ndim-1, -1, -1)))
+        return obj
+
+    if isinstance(obj, dict):
+        # Don't convert top-level dict to struct array
+        if not is_top_level:
+            # Check if this looks like a struct array (dict of equal-length lists)
+            # where each list element corresponds to one struct element
+            list_lens = [len(v) for v in obj.values() if isinstance(v, list)]
+            if list_lens and all(L == list_lens[0] for L in list_lens) and list_lens[0] > 0:
+                # This might be a struct array stored as dict-of-lists
+                # Check if it has typical struct array fields
+                nelem = list_lens[0]
+                has_per_element_data = any(
+                    isinstance(v, list) and len(v) == nelem and
+                    all(isinstance(x, (np.ndarray, str, dict)) or x is None for x in v)
+                    for v in obj.values()
+                )
+
+                if has_per_element_data and nelem > 1:
+                    # Convert to numpy structured array for proper MATLAB struct array
+                    return _dict_of_lists_to_struct_array(obj, nelem)
+
+        # Regular dict - recurse into values
+        return {k: _prepare_for_hdf5storage(v, transpose_arrays, is_top_level=False) for k, v in obj.items()}
+
+    if isinstance(obj, list):
+        # Check if this is a list of uint16 arrays (cell array of strings)
+        if all(isinstance(x, np.ndarray) and _is_uint16_string(x) for x in obj):
+            return [_uint16_to_string(x) for x in obj]
+
+        # Otherwise recurse
+        return [_prepare_for_hdf5storage(x, transpose_arrays) for x in obj]
+
+    if isinstance(obj, tuple):
+        return tuple(_prepare_for_hdf5storage(x, transpose_arrays) for x in obj)
+
+    return obj
+
+
+def _dict_of_lists_to_struct_array(d, nelem):
+    """
+    Convert a dict-of-lists to a numpy structured array for MATLAB struct array.
+
+    Args:
+        d: dict where values are lists of length nelem
+        nelem: number of elements in the struct array
+
+    Returns:
+        numpy structured array with shape (1, nelem)
+    """
+    field_names = list(d.keys())
+    dtype_list = [(name, 'O') for name in field_names]
+    struct_dtype = np.dtype(dtype_list)
+
+    # Create 1xN structured array (MATLAB will see as 1xN struct array)
+    struct_arr = np.empty((1, nelem), dtype=struct_dtype)
+
+    # Fields that are typically strings in MATLAB
+    string_field_hints = ['moviefile', 'moviename', 'sex', 'name', 'filename', 'path']
+
+    for i in range(nelem):
+        for field in field_names:
+            val = d[field]
+            if isinstance(val, list) and i < len(val):
+                elem = val[i]
+            else:
+                elem = val
+
+            if isinstance(elem, np.ndarray):
+                # Check if this is a string field
+                is_string_field = any(hint in field.lower() for hint in string_field_hints)
+                if is_string_field and _is_uint16_string(elem):
+                    struct_arr[field][0, i] = _uint16_to_string(elem)
+                else:
+                    # Transpose to counteract hdf5storage's dimension reversal
+                    elem = np.atleast_2d(elem)
+                    if elem.ndim >= 2 and elem.size > 1:
+                        elem = np.transpose(elem, axes=tuple(range(elem.ndim-1, -1, -1)))
+                    struct_arr[field][0, i] = elem
+            elif isinstance(elem, str):
+                struct_arr[field][0, i] = elem
+            else:
+                struct_arr[field][0, i] = elem
+
+    return struct_arr
+
+
 def savemat(matfile, data, matfiletype='scipy'):
     """
-    Save data to mat file using scipy.io.savemat.
-    Input:
+    Save data to mat file with MATLAB compatibility.
+
+    For HDF5 format (matfiletype='hdf5storage'), automatically handles:
+    - Transposing arrays to preserve orientation in MATLAB
+    - Converting uint16 character arrays to proper MATLAB strings
+    - Converting dict-of-lists to MATLAB struct arrays
+
+    Args:
         matfile: path to mat file
-        data: data to save
-        (optional) matfiletype: whether to save with scipy.io ('scipy') or hdf5storage.savemat
-        ('hdf5storage'), default 'scipy'
-    Output:
-        None
+        data: dict of data to save
+        matfiletype: 'scipy' for v5 format, 'hdf5storage' for v7.3 HDF5 format
     """
     if matfiletype == 'scipy':
         scipy.io.savemat(matfile, data, appendmat=False)
     elif matfiletype == 'hdf5storage':
-        # hdf5storage hasn't been updated in a long time, we should probably 
-        # switch to h5py. it relies on setuptools which is deprecated.
-        hdf5storage.savemat(matfile,data,appendmat=False,truncate_existing=True)
+        # Prepare data for MATLAB compatibility
+        prepared_data = _prepare_for_hdf5storage(data, transpose_arrays=True, is_top_level=True)
+        hdf5storage.savemat(matfile, prepared_data, appendmat=False, truncate_existing=True)
     else:
         raise ValueError(f'Unknown matfiletype {matfiletype}')
