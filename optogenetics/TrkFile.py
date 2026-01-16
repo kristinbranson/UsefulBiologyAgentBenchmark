@@ -2637,51 +2637,110 @@ def load_trx(trxfile):
     # trx['firstframe'], trx['endframe'], trx['nframes'] are numpy arrays of shape (ntargets,)
     # trx['x'], trx['y'], trx['startframes'], and trx['endframes']
     # are converted to be 0-indexed instead of 1-indexed
-    
+
     td,mattype = loadmat(trxfile)
 
-    ks = td['trx'].keys()
     scalarkeys = ['firstframe','endframe','nframes','fps','id']
     stringkeys = ['moviename','moviefile']
     trx = {}
-    for k in ks:
-        if k in scalarkeys:
-            trx[k] = np.array([x.item() if hasattr(x, 'item') else x for x in td['trx'][k]])
-        elif k in stringkeys:
-            # List of strings (one per target)
-            trx[k] = []
-            for x in td['trx'][k]:
-                if isinstance(x, str):
-                    trx[k].append(x)
-                elif isinstance(x, np.ndarray):
-                    # Convert uint16/uint8 array to string
-                    trx[k].append(''.join([chr(c) for c in x.flatten()]))
+
+    # Check if trx is a dict (h5py format) or array of mat_struct (scipy format)
+    if isinstance(td['trx'], dict):
+        # h5py format: td['trx'] is a dict with lists of values
+        ks = td['trx'].keys()
+        for k in ks:
+            if k in scalarkeys:
+                trx[k] = np.array([x.item() if hasattr(x, 'item') else x for x in td['trx'][k]])
+            elif k in stringkeys:
+                # List of strings (one per target)
+                if len(td['trx'][k]) == 0:
+                    trx[k] = None
                 else:
-                    trx[k].append(str(x))
-        elif k == 'sex':
-            # sex is per-frame classification
-            # single char -> string, multiple chars -> ndarray of characters
-            sex = []
-            for x in td['trx']['sex']:
-                if isinstance(x, str):
-                    if len(x) == 1:
-                        sexcurr = x
+                    x = td['trx'][k][0]
+                    if isinstance(x, str):
+                        trx[k] = x
+                    elif isinstance(x, np.ndarray):
+                        # Convert uint16/uint8 array to string
+                        trx[k] = ''.join([chr(c) for c in x.flatten()])
                     else:
-                        sexcurr = np.array(list(x))
-                elif isinstance(x, np.ndarray):
-                    chars = [chr(c) for c in x.flatten()]
-                    if len(chars) == 1:
-                        sexcurr = chars[0]
+                        trx[k] = str(x)
+            elif k == 'sex':
+                # sex is per-frame classification
+                # single char -> string, multiple chars -> ndarray of characters
+                sex = []
+                for x in td['trx']['sex']:
+                    if isinstance(x, str):
+                        if len(x) == 1:
+                            sexcurr = x
+                        else:
+                            sexcurr = np.array(list(x))
+                    elif isinstance(x, np.ndarray):
+                        chars = [chr(c) for c in x.flatten()]
+                        if len(chars) == 1:
+                            sexcurr = chars[0]
+                        else:
+                            sexcurr = np.array(chars)
                     else:
-                        sexcurr = np.array(chars)
+                        s = str(x)
+                        sexcurr = s if len(s) == 1 else np.array(list(s))
+                    sex.append(sexcurr)
+                trx['sex'] = sex
+            else:
+                trx[k] = [ x.flatten() if hasattr(x, 'flatten') else x for x in td['trx'][k] ]
+        trx_timestamps = td['trx'].get('timestamps', None)
+    else:
+        # scipy format: td['trx'] is a (1, nflies) array of mat_struct objects
+        trx_arr = td['trx'].flatten()
+        nflies = len(trx_arr)
+        ks = trx_arr[0]._fieldnames
+
+        for k in ks:
+            if k in scalarkeys:
+                trx[k] = np.array([np.array(getattr(fly, k)).flatten()[0] for fly in trx_arr])
+            elif k in stringkeys:
+                # List of strings (one per target)
+                if len(trx_arr) == 0:
+                    trx[k] = None
                 else:
-                    s = str(x)
-                    sexcurr = s if len(s) == 1 else np.array(list(s))
-                sex.append(sexcurr)
-            trx['sex'] = sex
-        else:
-            trx[k] = [ x.flatten() if hasattr(x, 'flatten') else x for x in td['trx'][k] ]
-            
+                    x = getattr(trx_arr[0], k)
+                    if isinstance(x, str):
+                        trx[k] = x
+                    elif isinstance(x, np.ndarray) and x.dtype.kind in ('U', 'S', 'O'):
+                        # Array of strings or object array - take first element
+                        trx[k] = str(x.flatten()[0])
+                    elif isinstance(x, np.ndarray):
+                        # uint16 array
+                        trx[k] = ''.join([chr(c) for c in x.flatten()])
+                    elif isinstance(x, list) and len(x) > 0:
+                        trx[k] = str(x[0])
+                    else:
+                        trx[k] = str(x)
+            elif k == 'sex':
+                # sex is per-frame classification
+                sex = []
+                for fly in trx_arr:
+                    x = getattr(fly, k)
+                    if isinstance(x, str):
+                        sexcurr = x if len(x) == 1 else np.array(list(x))
+                    elif isinstance(x, np.ndarray) and x.dtype.kind in ('U', 'S', 'O'):
+                        # Array of strings - flatten and join or keep as array
+                        chars = [str(c) for c in x.flatten()]
+                        sexcurr = chars[0] if len(chars) == 1 else np.array(chars)
+                    elif isinstance(x, np.ndarray):
+                        chars = [chr(c) for c in x.flatten()]
+                        sexcurr = chars[0] if len(chars) == 1 else np.array(chars)
+                    elif isinstance(x, list):
+                        chars = [str(c) for c in x]
+                        sexcurr = chars[0] if len(chars) == 1 else np.array(chars)
+                    else:
+                        s = str(x)
+                        sexcurr = s if len(s) == 1 else np.array(list(s))
+                    sex.append(sexcurr)
+                trx['sex'] = sex
+            else:
+                trx[k] = [np.array(getattr(fly, k)).flatten() for fly in trx_arr]
+        trx_timestamps = [np.array(getattr(fly, 'timestamps')).flatten() for fly in trx_arr] if 'timestamps' in ks else None
+
     trx['x'] = to_py(trx['x'])
     trx['y'] = to_py(trx['y'])
     trx['firstframe'] = to_py(trx['firstframe'].astype(int))
@@ -2689,11 +2748,16 @@ def load_trx(trxfile):
     trx['nframes'] = trx['endframe']-trx['firstframe']+1
     trx['ntargets'] = len(trx['x'])
     if 'timestamps' in td:
-        trx['timestamps'] = td['timestamps']
-    else:
-        if 'timestamps' in td['trx']:
+        trx['timestamps'] = np.array(td['timestamps']).flatten()
+    elif trx_timestamps is not None:
+        if isinstance(trx_timestamps, list):
+            # Build timestamps array from per-fly timestamps
             trx['timestamps'] = np.zeros(np.max(trx['endframe'])+1)
-            for ts,t0,t1 in zip(td['trx']['timestamps'],trx['firstframe'],trx['endframe']):
+            for ts, t0, t1 in zip(trx_timestamps, trx['firstframe'], trx['endframe']):
+                trx['timestamps'][t0:t1+1] = ts[:t1-t0+1].flatten() if len(ts) >= t1-t0+1 else ts
+        else:
+            trx['timestamps'] = np.zeros(np.max(trx['endframe'])+1)
+            for ts, t0, t1 in zip(trx_timestamps, trx['firstframe'], trx['endframe']):
                 trx['timestamps'][t0:t1+1] = ts.flatten()
 
     return trx

@@ -134,19 +134,19 @@ def _uint16_to_string(arr):
     return ''.join(chr(c) for c in np.array(arr).flatten())
 
 
-def _prepare_for_hdf5storage(obj, transpose_arrays=True, is_top_level=False):
+def _prepare_for_hdf5storage(obj, transpose_arrays=True, is_top_level=False, string_fields=None):
     """
     Recursively prepare data for saving with hdf5storage.
 
     Handles:
     - Transposing arrays to counteract hdf5storage's transpose behavior
-    - Converting uint16 character arrays back to Python strings
     - Converting dict-of-lists (struct with cell arrays) to struct arrays
 
     Args:
         obj: Python object to prepare
         transpose_arrays: whether to transpose 2D arrays (default True)
         is_top_level: whether this is the top-level dict (should not be converted to struct array)
+        string_fields: optional set/list of field names that should be treated as strings
 
     Returns:
         Prepared object ready for hdf5storage.savemat
@@ -155,16 +155,6 @@ def _prepare_for_hdf5storage(obj, transpose_arrays=True, is_top_level=False):
         return obj
 
     if isinstance(obj, np.ndarray):
-        # Check if this is a string stored as uint16
-        if _is_uint16_string(obj) and obj.size < 10000:  # reasonable string length
-            # Heuristic: if it looks like printable text, convert to string
-            try:
-                s = _uint16_to_string(obj)
-                if s.isprintable() or all(c.isprintable() or c in '\n\r\t' for c in s):
-                    return s
-            except:
-                pass
-
         # Transpose arrays to counteract hdf5storage's dimension reversal
         # hdf5storage reverses all dimensions when saving
         if transpose_arrays and obj.ndim >= 2 and obj.size > 1:
@@ -190,45 +180,45 @@ def _prepare_for_hdf5storage(obj, transpose_arrays=True, is_top_level=False):
 
                 if has_per_element_data and nelem > 1:
                     # Convert to numpy structured array for proper MATLAB struct array
-                    return _dict_of_lists_to_struct_array(obj, nelem)
+                    return _dict_of_lists_to_struct_array(obj, nelem, string_fields=string_fields)
 
         # Regular dict - recurse into values
-        return {k: _prepare_for_hdf5storage(v, transpose_arrays, is_top_level=False) for k, v in obj.items()}
+        return {k: _prepare_for_hdf5storage(v, transpose_arrays, is_top_level=False, string_fields=string_fields) for k, v in obj.items()}
 
     if isinstance(obj, list):
-        # Check if this is a list of uint16 arrays (cell array of strings)
-        if all(isinstance(x, np.ndarray) and _is_uint16_string(x) for x in obj):
-            return [_uint16_to_string(x) for x in obj]
-
-        # Otherwise recurse
-        return [_prepare_for_hdf5storage(x, transpose_arrays) for x in obj]
+        # Recurse into list elements
+        return [_prepare_for_hdf5storage(x, transpose_arrays, string_fields=string_fields) for x in obj]
 
     if isinstance(obj, tuple):
-        return tuple(_prepare_for_hdf5storage(x, transpose_arrays) for x in obj)
+        return tuple(_prepare_for_hdf5storage(x, transpose_arrays, string_fields=string_fields) for x in obj)
 
     return obj
 
 
-def _dict_of_lists_to_struct_array(d, nelem):
+def _dict_of_lists_to_struct_array(d, nelem, string_fields=None):
     """
     Convert a dict-of-lists to a numpy structured array for MATLAB struct array.
 
     Args:
         d: dict where values are lists of length nelem
         nelem: number of elements in the struct array
+        string_fields: optional set/list of field names that should be treated as strings
+                       (uint16 arrays in these fields will be converted to strings)
 
     Returns:
         numpy structured array with shape (1, nelem)
     """
     field_names = list(d.keys())
-    dtype_list = [(name, 'O') for name in field_names]
+    dtype_list = [(name, 'O') for name in field_names] 
     struct_dtype = np.dtype(dtype_list)
 
     # Create 1xN structured array (MATLAB will see as 1xN struct array)
     struct_arr = np.empty((1, nelem), dtype=struct_dtype)
 
-    # Fields that are typically strings in MATLAB
-    string_field_hints = ['moviefile', 'moviename', 'sex', 'name', 'filename', 'path']
+    if string_fields is None:
+        string_fields = set()
+    else:
+        string_fields = set(string_fields)
 
     for i in range(nelem):
         for field in field_names:
@@ -238,10 +228,11 @@ def _dict_of_lists_to_struct_array(d, nelem):
             else:
                 elem = val
 
-            if isinstance(elem, np.ndarray):
-                # Check if this is a string field
-                is_string_field = any(hint in field.lower() for hint in string_field_hints)
-                if is_string_field and _is_uint16_string(elem):
+            if isinstance(elem, str):
+                struct_arr[field][0, i] = elem
+            elif isinstance(elem, np.ndarray):
+                # Convert to string if field is in string_fields and data is uint16
+                if field in string_fields and _is_uint16_string(elem):
                     struct_arr[field][0, i] = _uint16_to_string(elem)
                 else:
                     # Transpose to counteract hdf5storage's dimension reversal
@@ -249,33 +240,32 @@ def _dict_of_lists_to_struct_array(d, nelem):
                     if elem.ndim >= 2 and elem.size > 1:
                         elem = np.transpose(elem, axes=tuple(range(elem.ndim-1, -1, -1)))
                     struct_arr[field][0, i] = elem
-            elif isinstance(elem, str):
-                struct_arr[field][0, i] = elem
             else:
                 struct_arr[field][0, i] = elem
 
     return struct_arr
 
 
-def savemat(matfile, data, matfiletype='scipy'):
+def savemat(matfile, data, matfiletype='scipy', string_fields=None):
     """
     Save data to mat file with MATLAB compatibility.
 
     For HDF5 format (matfiletype='hdf5storage'), automatically handles:
     - Transposing arrays to preserve orientation in MATLAB
-    - Converting uint16 character arrays to proper MATLAB strings
     - Converting dict-of-lists to MATLAB struct arrays
 
     Args:
         matfile: path to mat file
         data: dict of data to save
         matfiletype: 'scipy' for v5 format, 'hdf5storage' for v7.3 HDF5 format
+        string_fields: optional list of field names that should be treated as strings
+                       (uint16 arrays in these fields will be converted to strings)
     """
     if matfiletype == 'scipy':
         scipy.io.savemat(matfile, data, appendmat=False)
     elif matfiletype == 'hdf5storage':
         # Prepare data for MATLAB compatibility
-        prepared_data = _prepare_for_hdf5storage(data, transpose_arrays=True, is_top_level=True)
+        prepared_data = _prepare_for_hdf5storage(data, transpose_arrays=True, is_top_level=True, string_fields=string_fields)
         hdf5storage.savemat(matfile, prepared_data, appendmat=False, truncate_existing=True)
     else:
         raise ValueError(f'Unknown matfiletype {matfiletype}')
