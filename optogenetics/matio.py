@@ -180,7 +180,7 @@ def _prepare_for_hdf5storage(obj, transpose_arrays=True, is_top_level=False, str
 
                 if has_per_element_data and nelem > 1:
                     # Convert to numpy structured array for proper MATLAB struct array
-                    return _dict_of_lists_to_struct_array(obj, nelem, string_fields=string_fields)
+                    return _dict_of_lists_to_struct_array(obj, nelem, string_fields=string_fields, transpose_arrays=transpose_arrays)
 
         # Regular dict - recurse into values
         return {k: _prepare_for_hdf5storage(v, transpose_arrays, is_top_level=False, string_fields=string_fields) for k, v in obj.items()}
@@ -195,7 +195,7 @@ def _prepare_for_hdf5storage(obj, transpose_arrays=True, is_top_level=False, str
     return obj
 
 
-def _dict_of_lists_to_struct_array(d, nelem, string_fields=None):
+def _dict_of_lists_to_struct_array(d, nelem, string_fields=None, transpose_arrays=True):
     """
     Convert a dict-of-lists to a numpy structured array for MATLAB struct array.
 
@@ -204,12 +204,13 @@ def _dict_of_lists_to_struct_array(d, nelem, string_fields=None):
         nelem: number of elements in the struct array
         string_fields: optional set/list of field names that should be treated as strings
                        (uint16 arrays in these fields will be converted to strings)
+        transpose_arrays: whether to transpose arrays (default True)
 
     Returns:
         numpy structured array with shape (1, nelem)
     """
     field_names = list(d.keys())
-    dtype_list = [(name, 'O') for name in field_names] 
+    dtype_list = [(name, 'O') for name in field_names]
     struct_dtype = np.dtype(dtype_list)
 
     # Create 1xN structured array (MATLAB will see as 1xN struct array)
@@ -235,9 +236,9 @@ def _dict_of_lists_to_struct_array(d, nelem, string_fields=None):
                 if field in string_fields and _is_uint16_string(elem):
                     struct_arr[field][0, i] = _uint16_to_string(elem)
                 else:
-                    # Transpose to counteract hdf5storage's dimension reversal
                     elem = np.atleast_2d(elem)
-                    if elem.ndim >= 2 and elem.size > 1:
+                    # Transpose to counteract hdf5storage's dimension reversal (if requested)
+                    if transpose_arrays and elem.ndim >= 2 and elem.size > 1:
                         elem = np.transpose(elem, axes=tuple(range(elem.ndim-1, -1, -1)))
                     struct_arr[field][0, i] = elem
             else:
@@ -246,12 +247,12 @@ def _dict_of_lists_to_struct_array(d, nelem, string_fields=None):
     return struct_arr
 
 
-def savemat(matfile, data, matfiletype='scipy', string_fields=None):
+def savemat(matfile, data, matfiletype='scipy', string_fields=None, transpose_arrays=True):
     """
     Save data to mat file with MATLAB compatibility.
 
     For HDF5 format (matfiletype='hdf5storage'), automatically handles:
-    - Transposing arrays to preserve orientation in MATLAB
+    - Transposing arrays to preserve orientation in MATLAB (if transpose_arrays=True)
     - Converting dict-of-lists to MATLAB struct arrays
 
     Args:
@@ -260,12 +261,14 @@ def savemat(matfile, data, matfiletype='scipy', string_fields=None):
         matfiletype: 'scipy' for v5 format, 'hdf5storage' for v7.3 HDF5 format
         string_fields: optional list of field names that should be treated as strings
                        (uint16 arrays in these fields will be converted to strings)
+        transpose_arrays: whether to transpose arrays for MATLAB compatibility (default True).
+                          Set to False if data is already in the correct orientation.
     """
     if matfiletype == 'scipy':
         scipy.io.savemat(matfile, data, appendmat=False)
     elif matfiletype == 'hdf5storage':
         # Prepare data for MATLAB compatibility
-        prepared_data = _prepare_for_hdf5storage(data, transpose_arrays=True, is_top_level=True, string_fields=string_fields)
+        prepared_data = _prepare_for_hdf5storage(data, transpose_arrays=transpose_arrays, is_top_level=True, string_fields=string_fields)
         hdf5storage.savemat(matfile, prepared_data, appendmat=False, truncate_existing=True)
     else:
         raise ValueError(f'Unknown matfiletype {matfiletype}')
