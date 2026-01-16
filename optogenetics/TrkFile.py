@@ -2630,6 +2630,71 @@ def test_Trk_class():
     # ax.axis('equal')
     # plt.show()
 
+def _to_scalar(x):
+    """Convert a value to a scalar."""
+    if hasattr(x, 'item'):
+        return x.item()
+    if isinstance(x, np.ndarray):
+        return x.flatten()[0]
+    return x
+
+def _to_string(x):
+    """Convert a value to a string."""
+    if isinstance(x, str):
+        return x
+    if isinstance(x, np.ndarray):
+        if x.dtype.kind in ('U', 'S', 'O'):
+            # Array of strings or object array - take first element
+            return str(x.flatten()[0])
+        else:
+            # uint16/uint8 array - character codes
+            return ''.join([chr(c) for c in x.flatten()])
+    if isinstance(x, list) and len(x) > 0:
+        return str(x[0])
+    return str(x)
+
+def _to_sex(x):
+    """Convert a value to sex format (single char -> string, multiple -> ndarray)."""
+    if isinstance(x, str):
+        return x if len(x) == 1 else np.array(list(x))
+    if isinstance(x, np.ndarray):
+        if x.dtype.kind in ('U', 'S', 'O'):
+            # Array of strings
+            chars = [str(c) for c in x.flatten()]
+        else:
+            # uint16/uint8 array - character codes
+            chars = [chr(c) for c in x.flatten()]
+        return chars[0] if len(chars) == 1 else np.array(chars)
+    if isinstance(x, list):
+        chars = [str(c) for c in x]
+        return chars[0] if len(chars) == 1 else np.array(chars)
+    s = str(x)
+    return s if len(s) == 1 else np.array(list(s))
+
+def _to_array(x):
+    """Convert a value to a flattened numpy array."""
+    if isinstance(x, np.ndarray):
+        return x.flatten()
+    return np.array(x).flatten()
+
+def _trx_to_flies(trx_data):
+    """
+    Normalize trx data to a list of per-fly dicts.
+    Handles both h5py (dict of lists) and scipy (array of mat_struct) formats.
+    Returns (field_names, list_of_fly_dicts).
+    """
+    if isinstance(trx_data, dict):
+        # h5py format: dict with lists of values per field
+        ks = list(trx_data.keys())
+        nflies = len(trx_data[ks[0]]) if ks else 0
+        flies = [{k: trx_data[k][i] for k in ks} for i in range(nflies)]
+    else:
+        # scipy format: (1, nflies) array of mat_struct objects
+        trx_arr = trx_data.flatten()
+        ks = trx_arr[0]._fieldnames if len(trx_arr) > 0 else []
+        flies = [{k: getattr(fly, k) for k in ks} for fly in trx_arr]
+    return ks, flies
+
 def load_trx(trxfile):
     # load in trx mat file (how we store Ctrax results)
     # trx['x'], trx['x_mm'],... are lists of length ntargets, with
@@ -2638,127 +2703,39 @@ def load_trx(trxfile):
     # trx['x'], trx['y'], trx['startframes'], and trx['endframes']
     # are converted to be 0-indexed instead of 1-indexed
 
-    td,mattype = loadmat(trxfile)
+    td, mattype = loadmat(trxfile)
+    ks, flies = _trx_to_flies(td['trx'])
 
-    scalarkeys = ['firstframe','endframe','nframes','fps','id']
-    stringkeys = ['moviename','moviefile']
+    scalarkeys = {'firstframe', 'endframe', 'nframes', 'fps', 'id'}
+    stringkeys = {'moviename', 'moviefile'}
     trx = {}
 
-    # Check if trx is a dict (h5py format) or array of mat_struct (scipy format)
-    if isinstance(td['trx'], dict):
-        # h5py format: td['trx'] is a dict with lists of values
-        ks = td['trx'].keys()
-        for k in ks:
-            if k in scalarkeys:
-                trx[k] = np.array([x.item() if hasattr(x, 'item') else x for x in td['trx'][k]])
-            elif k in stringkeys:
-                # List of strings (one per target)
-                if len(td['trx'][k]) == 0:
-                    trx[k] = None
-                else:
-                    x = td['trx'][k][0]
-                    if isinstance(x, str):
-                        trx[k] = x
-                    elif isinstance(x, np.ndarray):
-                        # Convert uint16/uint8 array to string
-                        trx[k] = ''.join([chr(c) for c in x.flatten()])
-                    else:
-                        trx[k] = str(x)
-            elif k == 'sex':
-                # sex is per-frame classification
-                # single char -> string, multiple chars -> ndarray of characters
-                sex = []
-                for x in td['trx']['sex']:
-                    if isinstance(x, str):
-                        if len(x) == 1:
-                            sexcurr = x
-                        else:
-                            sexcurr = np.array(list(x))
-                    elif isinstance(x, np.ndarray):
-                        chars = [chr(c) for c in x.flatten()]
-                        if len(chars) == 1:
-                            sexcurr = chars[0]
-                        else:
-                            sexcurr = np.array(chars)
-                    else:
-                        s = str(x)
-                        sexcurr = s if len(s) == 1 else np.array(list(s))
-                    sex.append(sexcurr)
-                trx['sex'] = sex
-            else:
-                trx[k] = [ x.flatten() if hasattr(x, 'flatten') else x for x in td['trx'][k] ]
-        trx_timestamps = td['trx'].get('timestamps', None)
-    else:
-        # scipy format: td['trx'] is a (1, nflies) array of mat_struct objects
-        trx_arr = td['trx'].flatten()
-        nflies = len(trx_arr)
-        ks = trx_arr[0]._fieldnames
-
-        for k in ks:
-            if k in scalarkeys:
-                trx[k] = np.array([np.array(getattr(fly, k)).flatten()[0] for fly in trx_arr])
-            elif k in stringkeys:
-                # List of strings (one per target)
-                if len(trx_arr) == 0:
-                    trx[k] = None
-                else:
-                    x = getattr(trx_arr[0], k)
-                    if isinstance(x, str):
-                        trx[k] = x
-                    elif isinstance(x, np.ndarray) and x.dtype.kind in ('U', 'S', 'O'):
-                        # Array of strings or object array - take first element
-                        trx[k] = str(x.flatten()[0])
-                    elif isinstance(x, np.ndarray):
-                        # uint16 array
-                        trx[k] = ''.join([chr(c) for c in x.flatten()])
-                    elif isinstance(x, list) and len(x) > 0:
-                        trx[k] = str(x[0])
-                    else:
-                        trx[k] = str(x)
-            elif k == 'sex':
-                # sex is per-frame classification
-                sex = []
-                for fly in trx_arr:
-                    x = getattr(fly, k)
-                    if isinstance(x, str):
-                        sexcurr = x if len(x) == 1 else np.array(list(x))
-                    elif isinstance(x, np.ndarray) and x.dtype.kind in ('U', 'S', 'O'):
-                        # Array of strings - flatten and join or keep as array
-                        chars = [str(c) for c in x.flatten()]
-                        sexcurr = chars[0] if len(chars) == 1 else np.array(chars)
-                    elif isinstance(x, np.ndarray):
-                        chars = [chr(c) for c in x.flatten()]
-                        sexcurr = chars[0] if len(chars) == 1 else np.array(chars)
-                    elif isinstance(x, list):
-                        chars = [str(c) for c in x]
-                        sexcurr = chars[0] if len(chars) == 1 else np.array(chars)
-                    else:
-                        s = str(x)
-                        sexcurr = s if len(s) == 1 else np.array(list(s))
-                    sex.append(sexcurr)
-                trx['sex'] = sex
-            else:
-                trx[k] = [np.array(getattr(fly, k)).flatten() for fly in trx_arr]
-        trx_timestamps = [np.array(getattr(fly, 'timestamps')).flatten() for fly in trx_arr] if 'timestamps' in ks else None
+    for k in ks:
+        if k in scalarkeys:
+            trx[k] = np.array([_to_scalar(fly[k]) for fly in flies])
+        elif k in stringkeys:
+            trx[k] = _to_string(flies[0][k]) if flies else None
+        elif k == 'sex':
+            trx[k] = [_to_sex(fly[k]) for fly in flies]
+        else:
+            trx[k] = [_to_array(fly[k]) for fly in flies]
 
     trx['x'] = to_py(trx['x'])
     trx['y'] = to_py(trx['y'])
     trx['firstframe'] = to_py(trx['firstframe'].astype(int))
     trx['endframe'] = to_py(trx['endframe'].astype(int))
-    trx['nframes'] = trx['endframe']-trx['firstframe']+1
+    trx['nframes'] = trx['endframe'] - trx['firstframe'] + 1
     trx['ntargets'] = len(trx['x'])
+
+    # Handle timestamps: prefer top-level, otherwise build from per-fly
     if 'timestamps' in td:
         trx['timestamps'] = np.array(td['timestamps']).flatten()
-    elif trx_timestamps is not None:
-        if isinstance(trx_timestamps, list):
-            # Build timestamps array from per-fly timestamps
-            trx['timestamps'] = np.zeros(np.max(trx['endframe'])+1)
-            for ts, t0, t1 in zip(trx_timestamps, trx['firstframe'], trx['endframe']):
-                trx['timestamps'][t0:t1+1] = ts[:t1-t0+1].flatten() if len(ts) >= t1-t0+1 else ts
-        else:
-            trx['timestamps'] = np.zeros(np.max(trx['endframe'])+1)
-            for ts, t0, t1 in zip(trx_timestamps, trx['firstframe'], trx['endframe']):
-                trx['timestamps'][t0:t1+1] = ts.flatten()
+    elif 'timestamps' in trx:
+        per_fly_ts = trx['timestamps']
+        trx['timestamps'] = np.zeros(np.max(trx['endframe']) + 1)
+        for ts, t0, t1 in zip(per_fly_ts, trx['firstframe'], trx['endframe']):
+            nframes = t1 - t0 + 1
+            trx['timestamps'][t0:t1+1] = ts[:nframes] if len(ts) >= nframes else ts
 
     return trx
 
