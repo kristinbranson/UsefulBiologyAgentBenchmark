@@ -5,10 +5,10 @@ expinfo = importdata(expinfofile);
 
 expdirsin = expinfo.textdata(:,1);
 expdirsout = expinfo.textdata(:,2);
-endframes = expinfo.data(:,1);
+endframes = expinfo.data(:,1)+1;
 nexps = numel(expdirsin);
 maxoff = 1;
-tfforce = false;
+tfforce = true;
 
 %% registered trx file
 
@@ -61,7 +61,7 @@ for expi = 1:nexps,
 end
 
 %% crop indicator data
-
+filestr = 'indicatordata.mat';
 for expi = 1:nexps,
   fprintf('%d/%d\n',expi,nexps);
   expdirin = expdirsin{expi};
@@ -143,4 +143,76 @@ for expi = 1:nexps,
     end
     save(outfile,'-struct','outpd');
   end
+end
+
+%% check sizes for consistency
+
+expi = 1;
+expdirin = expdirsin{expi};
+expdirout = expdirsout{expi};
+endframe = endframes(expi);
+data = load(fullfile(expdirout,'movie_JAABA','trx.mat'));
+firstframes = [data.trx.firstframe];
+endframes = [data.trx.endframe];
+nframes = [data.trx.nframes];
+nframestotal = numel(data.timestamps);
+nflies = numel(data.trx);
+%%
+filestr = 'registered_trx.mat';
+data = load(fullfile(expdirout,filestr));
+
+assert(nflies == numel(data.trx),'nflies');
+assert(all(firstframes==[data.trx.firstframe]),'firstframes');
+assert(all(endframes==[data.trx.endframe]),'endframes');
+assert(all(nframes==[data.trx.nframes]),'nframes');
+assert(nframestotal == numel(data.timestamps),'nframestotal');
+%%
+filestr = 'wingtracking_results.mat';
+data = load(fullfile(expdirout,filestr));
+
+assert(nflies == numel(data.trx),'nflies');
+assert(all(firstframes==[data.trx.firstframe]),'firstframes');
+assert(all(endframes==[data.trx.endframe]),'endframes');
+assert(all(nframes==[data.trx.nframes]),'nframes');
+assert(nframestotal == numel(data.timestamps),'nframestotal');
+
+%% indicator data
+filestr = 'indicatordata.mat';
+data = load(fullfile(expdirout,filestr));
+assert(nframestotal > max(data.indicatorLED.endframe),'max endrame')
+
+%% scores files
+filestr = 'scores_Walk2.mat';
+data = load(fullfile(expdirout,filestr));
+assert(nflies == numel(data.allScores.scores),'nflies');
+assert(all(endframes==data.allScores.tEnd),'endframes');
+assert(all(firstframes==data.allScores.tStart),'firstframes');
+assert(all(endframes==cellfun(@numel,data.allScores.scores)),'endframes');
+assert(all(endframes >= cellfun(@max,data.allScores.t1s)-1),'t1s');
+assert(all(endframes >= cellfun(@max,data.allScores.t0s)),'t0s');
+
+%% per-frame data
+perframedir = 'perframe';
+indir = fullfile(expdirin,perframedir);
+outdir = fullfile(expdirout,perframedir);
+inperframefiles = mydir(fullfile(indir,'*.mat'));
+for i = 1:numel(inperframefiles),
+  [~,filestr,ext] = fileparts(inperframefiles{i});
+  infile = inperframefiles{i};
+  outfile = fullfile(outdir,[filestr,ext]);
+  data = load(outfile);
+  assert(nflies == numel(data.data),sprintf('%s nflies',filestr));
+  nframes1 = cellfun(@numel,data.data);
+  assert(all(nframes-maxoff<=nframes1) && all(nframes>=nframes1),sprintf('%s nframes',filestr));
+end
+
+%% trk file
+filestr = 'apt.trk';
+data = TrkFile.load(fullfile(expdirout,filestr));
+assert(nflies==numel(data.pTrk),'nflies');
+assert(all(firstframes==data.startframes),'firstframes');
+assert(all(endframes==data.endframes),'endframes');
+for fly = 1:nflies,
+  p = data.getPTrkTgt(fly);
+  assert(endframes(fly)==size(p,3),sprintf('endframe %d',fly));
 end
