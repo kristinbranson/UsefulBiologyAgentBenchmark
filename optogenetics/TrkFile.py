@@ -2740,12 +2740,18 @@ def load_trx(trxfile):
     return trx
 
 def load_perframedata(pffile):
-    pfd,_=loadmat(pffile)
-    ntargets = pfd['data'].size
-    data = [None,]*ntargets
-    for itgt in range(ntargets):
-        data[itgt] = pfd['data'][0,itgt].flatten()
-    units = pfd['units']
+    pfd, _ = loadmat(pffile)
+    if isinstance(pfd['data'], np.ndarray):
+        ntargets = pfd['data'].size
+        data = [None, ] * ntargets
+        for itgt in range(ntargets):
+            data[itgt] = pfd['data'][0, itgt].flatten()
+        units = pfd['units']
+    else:
+        data = pfd['data']
+        ntargets = len(data)
+        for itgt in range(ntargets):
+            data[itgt] = data[itgt].squeeze()
     return data
     
 def load_trk(trkfile):
