@@ -130,8 +130,7 @@ ax.plot([scalebar_x, scalebar_x + scalebarlength_px], [scalebar_y, scalebar_y], 
 ax.text(scalebar_x + scalebarlength_px/2, scalebar_y - 10, f'{scalebarlength_mm} mm', color='r', ha='center', va='bottom', fontsize=12)
 
 # save to svg, pdf, png
-expstr = os.path.basename(expdir)
-outfilestr = os.path.join(expdir, f'registration_{expstr}_{f:05d}')
+outfilestr = os.path.join(figdir, f'registration_{expstr}_{f:05d}')
 fig.savefig(outfilestr+'.svg')
 fig.savefig(outfilestr+'.png', dpi=300)
 fig.savefig(outfilestr+'.pdf')
@@ -313,9 +312,9 @@ for fly in range(nflies):
         tf = sd['allScores']['postprocessed'][fly][f-tplot:f+tplot+1,0] == 1
         iswalking[fly,tf,c] = color[c]
     colori += 1
-fig,ax = plt.subplots(1,1, figsize=(basefigsize,.5*basefigsize))
+fig,ax = plt.subplots(1,1, figsize=(.75*basefigsize,.5*basefigsize))
 ax.cla()
-ax.imshow(iswalking, aspect='auto', extent=[-tplot, tplot, 0, nflies])
+ax.imshow(iswalking, aspect='auto', extent=[-tplot, tplot, 0, nflies], interpolation='nearest')
 ax.set_yticks(np.arange(nflies)+.5)
 ax.set_yticklabels([f'Fly {fly}' for fly in range(nflies)])
 ax.set_xlabel('Frame')
