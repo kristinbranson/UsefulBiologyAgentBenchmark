@@ -301,7 +301,6 @@ fig.savefig(outfilestr+'.png', dpi=300)
 fig.savefig(outfilestr+'.pdf')
 
 # %% behavior classification
-
 scoresfile = os.path.join(expdir,'scores_Walk2.mat')
 sd,_ = matio.loadmat(scoresfile)
 iswalking = np.ones((nflies,tplot*2+1,3))
@@ -326,3 +325,241 @@ outfilestr = os.path.join(figdir, f'behaviorclassification_{expstr}_{f:05d}')
 fig.savefig(outfilestr+'.svg')
 fig.savefig(outfilestr+'.png', dpi=300)
 fig.savefig(outfilestr+'.pdf')
+
+# %% video
+
+expdir = '/groups/branson/bransonlab/datasets/flyopto/VNC2_Line1_RigA_20230621T102329'
+expstr = os.path.basename(expdir)
+moviefile = os.path.join(expdir, 'movie.ufmf')
+movie = movies.Movie(moviefile)
+import cv2
+t0 = 4622-100
+t1 = 4622+500
+outfps = 30
+outfile = os.path.join(figdir, f'movie_{expstr}_{t0}to{t1}_5xslower.mp4')
+downsample = 2
+
+outh = im.shape[0] // downsample
+outw = im.shape[1] // downsample
+
+# Create VideoWriter
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # or 'XVID' for .avi
+out = cv2.VideoWriter(outfile, fourcc, outfps, (outw, outh))
+
+# Write frames
+for t in range(t0, t1+1):
+    im = movie.get_frame(t)[0]
+    im_resized = cv2.resize(im, (outw, outh))
+    im_bgr = cv2.cvtColor(im_resized, cv2.COLOR_GRAY2BGR)
+    out.write(im_bgr)
+    
+out.release()
+
+t0 = 4622-100
+t1 = 4622+2900
+
+outfile = os.path.join(figdir, f'movie_{expstr}_{t0}to{t1}_RT.mp4')
+out = cv2.VideoWriter(outfile, fourcc, outfps, (outw, outh))
+
+# Write frames
+for t in range(t0, t1+1, FPS//outfps):
+    im = movie.get_frame(t)[0]
+    im_resized = cv2.resize(im, (outw, outh))
+    im_bgr = cv2.cvtColor(im_resized, cv2.COLOR_GRAY2BGR)
+    out.write(im_bgr)
+    
+out.release()
+
+# %% compute swing/stance durations and velocities
+
+rootdatadir = '/groups/branson/bransonlab/datasets/flyopto'
+expdirs = [os.path.join(rootdatadir,d) for d in os.listdir(rootdatadir) if d.startswith('VNC2_')]
+nexps = len(expdirs)
+# parse line from expdir name
+import re
+pattern = r'VNC2_(?P<line>.+?)_Rig(?P<rig>[A-Z])_(?P<datetime>\d{8}T\d{6})'
+expinfo = []
+for expdir in expdirs:
+    m = re.match(pattern, os.path.basename(expdir))
+    if m:
+        expinfo.append(m.groupdict())
+    else:
+        expinfo.append(None)
+swingstancefile = 'swingstance.mat'
+
+
+# find all stance bouts
+def get_interval_ends(x):
+    """Get start and end indices of contiguous True intervals in boolean array x."""
+    dx = np.diff(x.astype(int))
+    starts = np.where(dx == 1)[0] + 1
+    ends = np.where(dx == -1)[0] + 1
+    if x[0]:
+        starts = np.insert(starts, 0, 0)
+    if x[-1]:
+        ends = np.append(ends, len(x))
+    return starts, ends
+
+thresh_speed = np.array([-np.inf,20,np.inf]) # mm/s
+#thresh_speed = np.array([-np.inf,20,np.inf]) # mm/s
+nbins = len(thresh_speed) - 1
+
+expi = 0
+expdir = expdirs[expi]
+id,_ = matio.loadmat(os.path.join(expdir,'indicatordata.mat'))
+nstimuli = len(id['indicatorLED']['startframe'])
+
+mean_stance_duration_on = np.zeros((nexps,nstimuli,nbins))
+n_stance_on = np.zeros((nexps,nstimuli,nbins))
+mean_stance_duration_off = np.zeros((nexps,nstimuli,nbins))
+n_stance_off = np.zeros((nexps,nstimuli,nbins))
+
+for expi in range(nexps):
+
+    print(f'Processing experiment {expi+1}/{nexps}...')
+    mean_stance_duration_on[expi,:,:] = 0
+    n_stance_on[expi,:,:] = 0
+    mean_stance_duration_off[expi,:,:] = 0
+    n_stance_off[expi,:,:] = 0
+    
+    expdir = expdirs[expi]
+    expstr = os.path.basename(expdir)
+    swingstancepath = os.path.join(expdir, swingstancefile)
+    swingstancedata,_ = matio.loadmat(swingstancepath)
+    # load speed data
+    speedfile = os.path.join(expdir,'perframe','velmag_ctr.mat')
+    speeddata,_ = matio.loadmat(speedfile)
+    nflies = swingstancedata['isswing'].shape[2]
+    sd,_ = matio.loadmat(os.path.join(expdir,'scores_Walk2.mat'))
+    id,_ = matio.loadmat(os.path.join(expdir,'indicatordata.mat'))
+    
+    for stimi in range(nstimuli):
+        stimonstart = int(id['indicatorLED']['startframe'][stimi,0])
+        stimonend = int(id['indicatorLED']['endframe'][stimi,0])
+        stimoffstart = 0 if stimi==0 else int(id['indicatorLED']['endframe'][stimi-1,0])+1
+        stimoffend = int(id['indicatorLED']['startframe'][stimi,0])-1
+        for fly in range(nflies):
+            firstframe = int(sd['allScores']['tStart'][fly,0]-1)
+            endframe = int(sd['allScores']['tEnd'][fly,0]-1)
+            # fly must be alive for all frames of stimulus on and off periods
+            if firstframe > stimoffstart or endframe < stimonend:
+                continue
+            for leg in range(6):
+                t0s,t1s = get_interval_ends(swingstancedata['isstance'][:,leg,fly]==1)
+                idxon = (t1s >= stimonstart) & (t1s <= stimonend)
+                t0son = t0s[idxon]
+                t1son = t1s[idxon]
+                idxoff = (t0s >= stimoffstart) & (t1s <= stimoffend)
+                t0soff = t0s[idxoff]
+                t1soff = t1s[idxoff]
+                stance_durations_on = t1son - t0son
+                stance_durations_off = t1soff - t0soff
+                stance_speeds_on = np.array([np.mean(speeddata['data'][fly][t0-firstframe:t1-firstframe]) for t0,t1 in zip(t0son,t1son)])
+                stance_speeds_off = np.array([np.mean(speeddata['data'][fly][t0-firstframe:t1-firstframe]) for t0,t1 in zip(t0soff,t1soff)])
+                for bini in range(nbins):
+                    isspeedon = (thresh_speed[bini] <= stance_speeds_on) & (stance_speeds_on < thresh_speed[bini+1])
+                    mean_stance_duration_on[expi,stimi,bini] += np.sum(stance_durations_on[isspeedon])
+                    n_stance_on[expi,stimi,bini] += np.sum(isspeedon)
+                    isspeedoff = (thresh_speed[bini] <= stance_speeds_off) & (stance_speeds_off < thresh_speed[bini+1])
+                    mean_stance_duration_off[expi,stimi,bini] += np.sum(stance_durations_off[isspeedoff])
+                    n_stance_off[expi,stimi,bini] += np.sum(isspeedoff)
+                    
+mean_stance_duration_on /= np.maximum(1, n_stance_on)
+mean_stance_duration_off /= np.maximum(1, n_stance_off)
+mean_stance_duration_on[n_stance_on==0] = np.nan
+mean_stance_duration_off[n_stance_off==0] = np.nan
+
+mean_stance_duration_on /= FPS
+mean_stance_duration_off /= FPS
+
+# compute difference in on vs off
+delta_mean_stance_duration = mean_stance_duration_on - mean_stance_duration_off
+
+linenames,lineidx = np.unique([info['line'] for info in expinfo if info is not None],return_inverse=True)
+nlines = len(linenames)
+color_control = (0,0,0,1)
+colors_lines = plt.cm.tab10.colors
+controllineidx = np.where(linenames == 'Control')[0][0]
+
+from scipy import stats
+
+# Get control data
+control_data = delta_mean_stance_duration[lineidx == controllineidx, :, :]  # shape (n_control_exp, n_legs, nbins)
+
+# For each non-control line and each bin, compare to control
+pvalues = np.zeros((nlines, nbins))
+for linei in range(nlines):
+    if linei == controllineidx:
+        pvalues[linei, :] = np.nan
+        continue
+    line_data = delta_mean_stance_duration[lineidx == linei, :, :]
+    for bini in range(nbins):
+        ctrl = control_data[:, :, bini].flatten()
+        line = line_data[:, :, bini].flatten()
+        # Remove nans
+        ctrl = ctrl[~np.isnan(ctrl)]
+        line = line[~np.isnan(line)]
+        # Mann-Whitney U test (non-parametric) or use stats.ttest_ind for t-test
+        _, pvalues[linei, bini] = stats.mannwhitneyu(ctrl, line, alternative='two-sided')
+
+# Print results
+for linei in range(nlines):
+    if linei == controllineidx:
+        continue
+    print(f"{linenames[linei]}:")
+    for bini in range(nbins):
+        sig = '*' if pvalues[linei, bini] < 0.05 else ''
+        print(f"  bin {bini}: p={pvalues[linei, bini]:.4f} {sig}")
+
+fig,ax = plt.subplots(1,1, figsize=(2*basefigsize,basefigsize))
+ax.cla()
+colori = 0
+h = []
+for linei in range(nlines):
+    if linei == controllineidx:
+        color = color_control
+        off = 0
+        zorder = 5
+    else:
+        color = colors_lines[colori]
+        off = -.3+colori*.6/(nlines-1)+.02
+        zorder = 2
+        colori += 1
+    line_expi = np.where(lineidx == linei)[0]
+    for bini in range(nbins):
+        x = delta_mean_stance_duration[lineidx == linei,:,bini].flatten()
+        ax.plot(np.full(x.shape,bini+off), x, '.', color=(color[:3] + (0.5,)), zorder=zorder, markersize=5)
+        # plot line from min to max
+        sig = np.nanstd(x)
+        ax.plot([bini+off, bini+off], [np.nanmean(x)-sig, np.nanmean(x)+sig], '-', color=[c*.5 for c in color[:3]] + [1,], lw=2, zorder=zorder-1)
+        #ax.plot([bini+off, bini+off], [np.min(delta_mean_stance_duration[lineidx == linei,bini]), np.max(delta_mean_stance_duration[lineidx == linei,bini])], '-', color=color, lw=1)
+    x = delta_mean_stance_duration[lineidx == linei,:,:].reshape(-1, nbins)
+    hcurr = ax.plot(np.arange(nbins)+off, np.nanmean(x, axis=0), '-', color=color, lw=2, label=linenames[linei], zorder=zorder+1)[0]
+    #hcurr = ax.plot(np.arange(nbins)+off, np.full(nbins, np.nan), '-', color=color, lw=2, label=linenames[linei], zorder=zorder+1)[0]
+    h.append(hcurr)
+    if linei == controllineidx:
+        ax.plot(np.arange(nbins)+off, np.nanmean(x, axis=0), 'o', color=color, lw=2, label=linenames[linei], zorder=zorder+1, markersize=6)
+    else:
+        for bini in range(nbins):
+            if pvalues[linei, bini] < 0.05:
+                ax.plot(bini+off, np.nanmean(x[:, bini]), '*', color=color, lw=2, label=linenames[linei], zorder=zorder+2, markeredgecolor='k', markersize=10)
+            else:
+                ax.plot(bini+off, np.nanmean(x[:, bini]), 'o', color=[0,0,0,0], lw=2, label=linenames[linei], zorder=zorder, markeredgecolor=color, markersize=6)            
+            
+ax.set_xticks(np.arange(nbins-1)+.5)
+ax.set_xticklabels([str(x) for x in thresh_speed[1:-1]])
+#ax.set_xticks(np.arange(nbins))
+#ax.set_xticklabels(['Slow','Fast'])
+#ax.set_xlabel('Speed bin (mm/s)')
+ax.set_ylabel('On - off stance duration (s)')
+ax.legend(handles=h, loc='upper left', bbox_to_anchor=(1, 1))
+
+ax.set_ylim(-.025,.025)
+fig.tight_layout()
+
+outfilestr = 'stance_duration_comparison_alllines'
+fig.savefig(os.path.join(figdir, outfilestr+'.svg'))
+fig.savefig(os.path.join(figdir, outfilestr+'.png'), dpi=300)
+fig.savefig(os.path.join(figdir, outfilestr+'.pdf'))
+
+# %% 

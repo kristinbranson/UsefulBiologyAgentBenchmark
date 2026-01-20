@@ -145,6 +145,30 @@ for expi = 1:nexps,
   end
 end
 
+
+%% swing stance
+
+filestr = 'locomotionmetrics_swingstancebouts.mat';
+outfilestr = 'swingstance.mat';
+for expi = 1:nexps,
+  fprintf('%d/%d\n',expi,nexps);
+
+  expdirin = expdirsin{expi};
+  expdirout = expdirsout{expi};
+  endframe = endframes(expi);
+  infile = fullfile(expdirin,filestr);
+  outfile = fullfile(expdirout,outfilestr);
+
+  if ~tfforce && exist(outfile,'file'),
+    continue;
+  end
+  
+  intrxfile = fullfile(expdirin,'registered_trx.mat');
+  crop_swing_stance(infile,outfile,endframe,intrxfile);
+end
+
+%% swing stance duration vs velocity
+
 %% check sizes for consistency
 
 expi = 1;
