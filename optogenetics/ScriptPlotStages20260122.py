@@ -400,7 +400,7 @@ def get_interval_ends(x):
         ends = np.append(ends, len(x))
     return starts, ends
 
-thresh_speed = np.array([-np.inf,20,np.inf]) # mm/s
+thresh_speed = np.array([-np.inf,17.5,50]) # mm/s
 #thresh_speed = np.array([-np.inf,20,np.inf]) # mm/s
 nbins = len(thresh_speed) - 1
 
@@ -511,10 +511,17 @@ for linei in range(nlines):
         sig = '*' if pvalues[linei, bini] < 0.05 else ''
         print(f"  bin {bini}: p={pvalues[linei, bini]:.4f} {sig}")
 
-fig,ax = plt.subplots(1,1, figsize=(2*basefigsize,basefigsize))
+if nbins > 2:
+    figsize = (2*basefigsize, basefigsize)
+    maxoff = .3
+else:
+    figsize = (1.5*basefigsize, .75*basefigsize)
+    maxoff = .4
+fig,ax = plt.subplots(1,1, figsize=figsize)
 ax.cla()
 colori = 0
 h = []
+ylim = .025
 for linei in range(nlines):
     if linei == controllineidx:
         color = color_control
@@ -522,7 +529,7 @@ for linei in range(nlines):
         zorder = 5
     else:
         color = colors_lines[colori]
-        off = -.3+colori*.6/(nlines-1)+.02
+        off = -maxoff+colori*2*maxoff/(nlines-1)+.05
         zorder = 2
         colori += 1
     line_expi = np.where(lineidx == linei)[0]
@@ -534,27 +541,40 @@ for linei in range(nlines):
         ax.plot([bini+off, bini+off], [np.nanmean(x)-sig, np.nanmean(x)+sig], '-', color=[c*.5 for c in color[:3]] + [1,], lw=2, zorder=zorder-1)
         #ax.plot([bini+off, bini+off], [np.min(delta_mean_stance_duration[lineidx == linei,bini]), np.max(delta_mean_stance_duration[lineidx == linei,bini])], '-', color=color, lw=1)
     x = delta_mean_stance_duration[lineidx == linei,:,:].reshape(-1, nbins)
-    hcurr = ax.plot(np.arange(nbins)+off, np.nanmean(x, axis=0), '-', color=color, lw=2, label=linenames[linei], zorder=zorder+1)[0]
-    #hcurr = ax.plot(np.arange(nbins)+off, np.full(nbins, np.nan), '-', color=color, lw=2, label=linenames[linei], zorder=zorder+1)[0]
+    if nbins > 2:
+        hcurr = ax.plot(np.arange(nbins)+off, np.nanmean(x, axis=0), '-', color=color, lw=2, label=linenames[linei], zorder=zorder+1)[0]
+    else:
+        hcurr = ax.plot(np.arange(nbins)+off, np.nanmean(x,axis=0), 'o', color=color, lw=2, label=linenames[linei], zorder=zorder+2, markeredgecolor='k', markersize=10)[0]
+        #hcurr = ax.plot(np.arange(nbins)+off, np.full(nbins, np.nan), '-', color=color, lw=2, label=linenames[linei], zorder=zorder+1)[0]
     h.append(hcurr)
     if linei == controllineidx:
         ax.plot(np.arange(nbins)+off, np.nanmean(x, axis=0), 'o', color=color, lw=2, label=linenames[linei], zorder=zorder+1, markersize=6)
     else:
         for bini in range(nbins):
-            if pvalues[linei, bini] < 0.05:
-                ax.plot(bini+off, np.nanmean(x[:, bini]), '*', color=color, lw=2, label=linenames[linei], zorder=zorder+2, markeredgecolor='k', markersize=10)
+            if nbins > 2:
+                if pvalues[linei, bini] < 0.05:
+                    ax.plot(bini+off, np.nanmean(x[:, bini]), '*', color=color, lw=2, label=linenames[linei], zorder=zorder+2, markeredgecolor='k', markersize=10)
+                else:
+                    ax.plot(bini+off, np.nanmean(x[:, bini]), 'o', color=[0,0,0,0], lw=2, label=linenames[linei], zorder=zorder, markeredgecolor=color, markersize=6)            
             else:
-                ax.plot(bini+off, np.nanmean(x[:, bini]), 'o', color=[0,0,0,0], lw=2, label=linenames[linei], zorder=zorder, markeredgecolor=color, markersize=6)            
-            
-ax.set_xticks(np.arange(nbins-1)+.5)
-ax.set_xticklabels([str(x) for x in thresh_speed[1:-1]])
-#ax.set_xticks(np.arange(nbins))
-#ax.set_xticklabels(['Slow','Fast'])
-#ax.set_xlabel('Speed bin (mm/s)')
+                if pvalues[linei, bini] <= .001:
+                    ax.text(bini+off, ylim, '***', color=color, ha='center', va='top', fontsize=18)
+                elif pvalues[linei, bini] <= .01:
+                    ax.text(bini+off, ylim, '**', color=color, ha='center', va='top', fontsize=18)
+                elif pvalues[linei, bini] <= .05:
+                    ax.text(bini+off, ylim, '*', color=color, ha='center', va='top', fontsize=18)
+
+if nbins > 2:
+    ax.set_xticks(np.arange(nbins-1)+.5)
+    ax.set_xticklabels([str(x) for x in thresh_speed[1:-1]])
+    ax.set_xlabel('Speed bin (mm/s)')
+else:
+    ax.set_xticks(np.arange(nbins))
+    ax.set_xticklabels(['Slow','Fast'])
 ax.set_ylabel('On - off stance duration (s)')
 ax.legend(handles=h, loc='upper left', bbox_to_anchor=(1, 1))
 
-ax.set_ylim(-.025,.025)
+ax.set_ylim(-ylim,ylim)
 fig.tight_layout()
 
 outfilestr = 'stance_duration_comparison_alllines'
