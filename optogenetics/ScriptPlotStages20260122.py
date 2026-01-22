@@ -581,5 +581,3 @@ outfilestr = 'stance_duration_comparison_alllines'
 fig.savefig(os.path.join(figdir, outfilestr+'.svg'))
 fig.savefig(os.path.join(figdir, outfilestr+'.png'), dpi=300)
 fig.savefig(os.path.join(figdir, outfilestr+'.pdf'))
-
-# %% 
