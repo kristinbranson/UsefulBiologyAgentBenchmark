@@ -753,11 +753,13 @@ class Tracklet:
         for itgt in range(self.ntargets):
             if self.data[itgt] is None:
                 continue
+            if self.data[itgt].size == 0:
+                continue
             idx_real = np.where(~np.all(equals_nan(self.data[itgt],self.defaultval),axis=axis_rest))[0]
             if len(idx_real) == 0 and (force or (self.max_startframes is None)):
                 self.startframes[itgt] = -1
                 self.endframes[itgt] = -2
-                self.data[itgt] = np.array(self.size_rest+(0,))
+                self.data[itgt] = np.full(self.size_rest+(0,),self.defaultval)
                 continue
             sf = idx_real[0] # in relation to startframe
             ef = idx_real[-1]
@@ -1215,6 +1217,7 @@ class Trk:
         self.ntargets = 0 # number of targets
         self.T0 = 0 # first frame this data corresponds to
         self.trkData = {} # other data read from trkfile
+        self.matfiletype = 'hdf5storage' # default mat file type to use
     
         # for sparse format data
         self.defaultval = np.nan # default value when sparse
@@ -1291,12 +1294,24 @@ class Trk:
         """
         
         if self.pTrk is None:
-                return
+            return
         canremove = self.pTrk.isEmpty()
+        if not np.any(canremove):
+            return
         idxremove = np.nonzero(canremove)[0]
-        for k in self.trkFields:
-            if self.__dict__[k] is not None:
-                self.__dict__[k].remove_tgts(idxremove)
+        if self.issparse:
+            for k in self.trkFields:
+                if self.__dict__[k] is not None:
+                    self.__dict__[k].remove_tgts(idxremove)
+            self.pTrk.remove_tgts(idxremove)
+            self.ntargets = self.pTrk.ntargets
+        else:
+            self.pTrk = self.pTrk[...,~canremove]
+            for k in self.trkFields:
+                if self.__dict__[k] is not None:
+                    self.__dict__[k] = self.__dict__[k][...,~canremove]
+            self.ntargets = self.pTrk.shape[3]
+        self.pTrkiTgt = self.pTrkiTgt[~canremove]
 
     def copy(self):
         """
@@ -1341,7 +1356,7 @@ class Trk:
         :return:
         """
         self.trkfile = trkfile
-        trk,matfiletype = loadmat(trkfile)
+        trk,self.matfiletype = loadmat(trkfile)
         #   trk = hdf5storage.loadmat(trkfile,appendmat=False)
 
         # trk will be dict for sparse matrix, list for tracklet, ndarray for dense
@@ -1426,7 +1441,7 @@ class Trk:
 
         for key,val in trk.items():
             
-            if key in ['pTrk','pTrkFrm','pTrkTS','pTrkTag','pTrkiTgt','startframes','endframes','#refs#']:
+            if key in self.trkFields + ['pTrk','pTrkFrm','pTrkTS','pTrkTag','pTrkiTgt','startframes','endframes','#refs#']:
                 continue
                 
             self.trkData[key] = val
@@ -1460,7 +1475,7 @@ class Trk:
     def pTrkFrm(T0, T1):
         return to_mat(np.arange(T0,T1+1,dtype=int)).reshape((1,T1-T0+1))
             
-    def savetracklet(self,outtrkfile,consolidate=False,**kwargs):
+    def savetracklet(self,outtrkfile,consolidate=False,matfiletype=None,**kwargs):
         
         """
         Save data in sparse format to file outtrkfile.
@@ -1501,7 +1516,9 @@ class Trk:
         for k in kwargs.keys():
             trkData[k] = kwargs[k]
 
-        savemat(outtrkfile,trkData)
+        if matfiletype is None:
+            matfiletype = self.matfiletype
+        savemat(outtrkfile,trkData,matfiletype=matfiletype,strip_nones=True)
             
     def savesparse(self,outtrkfile):
         """
@@ -1541,7 +1558,7 @@ class Trk:
             # if self.pTrkConf is not None:
             #   trkData['pTrkConf'] = convertdense2sparsematrix(self.pTrkConf,defaultval=self.defaultval_dict['conf'],tomatlab=True)
 
-        savemat(outtrkfile,trkData)
+        savemat(outtrkfile,trkData,matfiletype=self.matfiletype)
     
     def savefull(self,outtrkfile,consolidate=True):
         """
@@ -1575,7 +1592,7 @@ class Trk:
         trkData['pTrkFrm']=self.pTrkFrm(T0,T1)
         trkData['pTrkiTgt'] = to_mat(self.pTrkiTgt)
 
-        savemat(outtrkfile,trkData)
+        savemat(outtrkfile,trkData,matfiletype=self.matfiletype)
         
     def getframe(self,fs,extra=False):
         """

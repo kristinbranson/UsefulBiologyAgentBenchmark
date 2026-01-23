@@ -246,8 +246,58 @@ def _dict_of_lists_to_struct_array(d, nelem, string_fields=None, transpose_array
 
     return struct_arr
 
+def _strip_nones(data):
+    """Recursively remove None values from dicts and lists."""
+    if isinstance(data, dict):
+        return {k: _strip_nones(v) for k, v in data.items() if v is not None}
+    elif isinstance(data, list):
+        return [_strip_nones(v) for v in data if v is not None]
+    else:
+        return data
+    
+def _shorten_field_names(data, max_length=31):
+    """Recursively shorten field names in dicts to a maximum length."""
+    if isinstance(data, dict):
+        new_data = {}
+        for k, v in data.items():
+            new_key = k[:max_length]
+            new_data[new_key] = _shorten_field_names(v, max_length)
+        return new_data
+    elif isinstance(data, list):
+        return [_shorten_field_names(v, max_length) for v in data]
+    else:
+        return data
+    
+def _remove_bad_field_names(data):
+    """Recursively remove fields with bad names (e.g., containing spaces or special characters, starting with number or underscore)."""
+    def is_valid_field_name(name):
+        return all(c.isalnum() or c == '_' for c in name) and not (name[0].isdigit() or name[0] == '_')
 
-def savemat(matfile, data, matfiletype='scipy', string_fields=None, transpose_arrays=True):
+    if isinstance(data, dict):
+        new_data = {}
+        for k, v in data.items():
+            if is_valid_field_name(k):
+                new_data[k] = _remove_bad_field_names(v)
+        return new_data
+    elif isinstance(data, list):
+        return [_remove_bad_field_names(v) for v in data]
+    else:
+        return data
+    
+def _transpose_arrays(data):
+    """Recursively transpose 2D arrays in dicts and lists."""
+    if isinstance(data, dict):
+        return {k: _transpose_arrays(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_transpose_arrays(v) for v in data]
+    elif isinstance(data, np.ndarray):
+        if data.ndim >= 2 and data.size > 1:
+            return np.transpose(data, axes=tuple(range(data.ndim-1, -1, -1)))
+        return data
+    else:
+        return data
+
+def savemat(matfile, data, matfiletype='scipy', string_fields=None, transpose_arrays=True, strip_nones=True):
     """
     Save data to mat file with MATLAB compatibility.
 
@@ -265,8 +315,14 @@ def savemat(matfile, data, matfiletype='scipy', string_fields=None, transpose_ar
                           Set to False if data is already in the correct orientation.
     """
     if matfiletype == 'scipy':
+        if strip_nones:
+            data = _strip_nones(data)
+        data = _shorten_field_names(data, max_length=31)
+        data = _remove_bad_field_names(data)
+        if transpose_arrays:
+            data = _transpose_arrays(data)
         scipy.io.savemat(matfile, data, appendmat=False)
-    elif matfiletype == 'hdf5storage':
+    elif matfiletype in ['h5py','hdf5storage']:
         # Prepare data for MATLAB compatibility
         prepared_data = _prepare_for_hdf5storage(data, transpose_arrays=transpose_arrays, is_top_level=True, string_fields=string_fields)
         hdf5storage.savemat(matfile, prepared_data, appendmat=False, truncate_existing=True)

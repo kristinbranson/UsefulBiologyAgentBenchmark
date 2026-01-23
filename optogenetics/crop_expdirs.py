@@ -47,7 +47,7 @@ from multiprocessing import Pool, cpu_count
 from movies import Movie
 from crop_ufmf import cropufmf
 from matio import loadmat, savemat
-from TrkFile import Trk
+import TrkFile
 
 
 # =============================================================================
@@ -468,82 +468,15 @@ def crop_apt_trk(infile, outfile, split_frame):
     Returns:
         tuple of (success: bool, message: str)
     """
-    try:
-        # First determine the input file type so we can save in the same format
-        _, matfiletype = loadmat(infile)
-        # Map matio's datatype names to matfiletype for savemat
-        if matfiletype == 'h5py':
-            matfiletype = 'hdf5storage'
-        # else matfiletype == 'scipy' stays as is
+    trk = TrkFile.Trk(trkfile=infile)
+    for fly in range(trk.ntargets):
+        p = trk.gettarget(fly)
+        p[:,:,split_frame:] = trk.defaultval
+        trk.settarget(p,fly)
+    trk.consolidate()
+    trk.save(outfile)
 
-        # Load the trk file using Trk class
-        trk = Trk(trkfile=infile)
-
-        if trk.issparse:
-            # For sparse/tracklet format, use set_startendframes to crop in-place
-            # Compute new endframes: clip each target's endframe to split_frame
-            new_endframes = np.minimum(trk.endframes, split_frame)
-            # Keep startframes the same (targets that start after split_frame will have
-            # endframe < startframe, which is invalid, but set_startendframes handles this)
-            new_startframes = trk.startframes.copy()
-
-            # For targets where startframe > split_frame, set both to split_frame
-            # (this effectively makes them empty)
-            invalid = new_startframes > split_frame
-            new_startframes[invalid] = split_frame
-            new_endframes[invalid] = split_frame - 1  # endframe < startframe means no data
-
-            # Crop the main pTrk tracklet
-            trk.pTrk.set_startendframes(new_startframes, new_endframes)
-
-            # Crop each of the extra tracklet fields (pTrkTS, pTrkTag, pTrkConf, pTrkAnimalConf)
-            for k in trk.trkFields:
-                if trk.__dict__[k] is not None:
-                    trk.__dict__[k].set_startendframes(new_startframes, new_endframes)
-        else:
-            # For dense format, slice the arrays directly
-            new_T1 = min(trk.T1, split_frame)
-            n_frames = new_T1 - trk.T0 + 1
-            trk.pTrk = trk.pTrk[:, :, :n_frames, :]
-            for k in trk.trkFields:
-                if trk.__dict__[k] is not None:
-                    trk.__dict__[k] = trk.__dict__[k][:, :n_frames, :]
-
-        # Save to output file, preserving the input mat file format
-        os.makedirs(os.path.dirname(outfile) if os.path.dirname(outfile) else '.', exist_ok=True)
-
-        # Build trkData using Trk's internal structure (mirroring savetracklet logic)
-        from TrkFile import to_mat
-        trkData = trk.trkData.copy()
-
-        # Remove None values recursively (scipy.io.savemat can't handle None)
-        def remove_none_values(d):
-            if isinstance(d, dict):
-                return {k: remove_none_values(v) for k, v in d.items() if v is not None}
-            return d
-        trkData = remove_none_values(trkData)
-
-        T0 = trk.T0
-        T1 = T0 + trk.pTrk.T - 1
-        trkData['pTrkFrm'] = to_mat(np.arange(T0, T1 + 1, dtype=int)).reshape((1, T1 - T0 + 1))
-
-        # Get tracklet data for saving
-        trkData['pTrk'], trkData['startframes'], trkData['endframes'] = trk.pTrk.to_mat()
-        for k in trk.trkFields:
-            if trk.__dict__[k] is not None:
-                trk.__dict__[k].set_startendframes(trk.pTrk.startframes, trk.pTrk.endframes)
-                trkData[k], _, _ = trk.__dict__[k].to_mat()
-
-        trkData['pTrkiTgt'] = to_mat(trk.pTrkiTgt)
-
-        # Save with the same format as input
-        # transpose_arrays=False because Trk's to_mat() already handles MATLAB orientation
-        savemat(outfile, trkData, matfiletype=matfiletype, transpose_arrays=False)
-
-        return True, 'cropped'
-    except Exception as e:
-        return False, f'error: {e}'
-
+    return True, 'cropped'
 
 # =============================================================================
 # Metadata anonymization
@@ -1006,8 +939,14 @@ Examples:
     print(f"\nProcessing {len(process_args)} experiments ({', '.join(tasks)}) "
           f"using {args.workers} workers{'(force)' if args.force else ''}...")
 
-    with Pool(processes=args.workers) as pool:
-        results = pool.map(process_experiment, process_args)
+    if args.workers <= 1:
+        results = []
+        for pa in process_args:
+            res = process_experiment(pa)
+            results.append(res)
+    else:
+        with Pool(processes=args.workers) as pool:
+            results = pool.map(process_experiment, process_args)
 
     # Summary
     successes = sum(1 for r in results if r['success'])
