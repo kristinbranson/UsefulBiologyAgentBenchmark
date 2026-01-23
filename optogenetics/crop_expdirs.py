@@ -471,7 +471,7 @@ def crop_apt_trk(infile, outfile, split_frame):
     trk = TrkFile.Trk(trkfile=infile)
     for fly in range(trk.ntargets):
         p = trk.gettarget(fly)
-        p[:,:,split_frame:] = trk.defaultval
+        p[:,:,split_frame+1:] = trk.defaultval
         trk.settarget(p,fly)
     trk.consolidate()
     trk.save(outfile)

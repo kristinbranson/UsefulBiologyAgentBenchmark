@@ -171,7 +171,7 @@ end
 
 %% check sizes for consistency
 
-expi = 1;
+expi = 34;
 expdirin = expdirsin{expi};
 expdirout = expdirsout{expi};
 endframe = endframes(expi);

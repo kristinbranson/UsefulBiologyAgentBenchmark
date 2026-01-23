@@ -4,7 +4,10 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import h5py
 import logging
-from matio import loadmat, savemat
+import matio
+loadmat = matio.loadmat
+
+savemat = lambda *args,**kwargs: matio.savemat(*args,**(kwargs|{"transpose_arrays": False, "strip_nones": True}))
 
 def convert(in_data,to_python):
     """
@@ -1518,7 +1521,7 @@ class Trk:
 
         if matfiletype is None:
             matfiletype = self.matfiletype
-        savemat(outtrkfile,trkData,matfiletype=matfiletype,strip_nones=True)
+        savemat(outtrkfile,trkData,matfiletype=matfiletype)
             
     def savesparse(self,outtrkfile):
         """
