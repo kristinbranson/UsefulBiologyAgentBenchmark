@@ -2715,6 +2715,92 @@ def _trx_to_flies(trx_data):
         flies = [{k: getattr(fly, k) for k in ks} for fly in trx_arr]
     return ks, flies
 
+def load_ctrax_trx(trxfile=None,td=None):
+    """
+    Load Ctrax tracking data from a .mat file.
+
+    Parameters
+    ----------
+    trxfile : str
+        Path to the .mat file containing Ctrax tracking data.
+    td: dict, optional
+        Pre-loaded tracking data dictionary (if already loaded).
+
+    Returns
+    -------
+    list[Trajectory]
+        List of Trajectory objects, one per tracked identity
+    """
+
+    # Load the .mat file
+    if td is None:
+        td,_ = loadmat(trxfile)
+
+    # flatten to 1D arrays
+    for k,v in td.items():
+        if not k.startswith('__'):
+            td[k] = np.atleast_1d(v).flatten()
+
+    identity = td.pop('identity').astype(int)
+    ntargets = td.pop('ntargets').astype(int)
+    startframe0 = int(td.pop('startframe').item())
+
+    # Find unique identities
+    ids_curr = np.unique(identity)
+    nflies = len(ids_curr)
+
+    # MATLAB uses 1-indexing, Python uses 0-indexing
+    # The original code adds 1 to convert to MATLAB indexing
+    # For Python, we keep the original 0-indexed coordinates
+    # If you need 1-indexed (MATLAB-style), uncomment below:
+    # x_pos = x_pos + 1
+    # y_pos = y_pos + 1
+
+    # Build frame number array
+    # Each entry in ntargets tells how many detections are in that frame
+    framenumber = np.zeros(len(identity), dtype=int)
+    j = 0
+    for i, n in enumerate(ntargets):
+        # MATLAB uses 1-indexing for frames, Python uses 0-indexing
+        # Using 0-indexed frames here (frame 0 is first frame)
+        framenumber[j:j + n] = i
+        j += n
+
+    # Build trajectory for each identity
+    trx = {'firstframe': [None, ] * nflies, 'endframe': [None, ] * nflies, 'nframes': [None, ] * nflies, 'off': [None, ] * nflies}
+    has_timestamps = 'timestamps' in td
+    if has_timestamps:
+        trx['timestamps'] = td.pop('timestamps')
+        trx['dt'] = [None, ] * nflies
+
+    rename = {'x_pos': 'x', 'y_pos': 'y', 'maj_ax': 'a', 'min_ax': 'b', 'angle': 'theta'}
+    ignore = {'identity','timestamps'}
+    
+    for flyi,id_val in enumerate(ids_curr):
+        idx = identity == id_val
+
+        for k in td.keys():
+            if (k in ignore) or k.startswith('__'):
+                continue
+            newk = rename[k] if k in rename else k
+            if newk not in trx:
+                trx[newk] = [None, ] * nflies
+            trx[newk][flyi] = td[k][idx]
+
+        # firstframe is 0-indexed (first frame = 0)
+        trx['firstframe'][flyi] = startframe0+framenumber[np.where(idx)[0][0]]
+        trx['nframes'][flyi] = len(trx['x'][flyi])
+        trx['endframe'][flyi] = startframe0+trx['nframes'][flyi] + trx['firstframe'][flyi] - 1
+        trx['off'][flyi] = -trx['firstframe'][flyi]  # offset to convert frame to array index
+        if has_timestamps:
+            ts = trx['timestamps'][trx['firstframe'][flyi]:trx['endframe'][flyi]+1]
+            trx['dt'][flyi] = np.diff(ts)
+
+    trx['ntargets'] = nflies
+
+    return trx
+
+
 def load_trx(trxfile):
     # load in trx mat file (how we store Ctrax results)
     # trx['x'], trx['x_mm'],... are lists of length ntargets, with
@@ -2724,6 +2810,10 @@ def load_trx(trxfile):
     # are converted to be 0-indexed instead of 1-indexed
 
     td, mattype = loadmat(trxfile)
+    
+    if (not 'trx' in td) and ('x_pos' in td):
+        return load_ctrax_trx(td=td)
+    
     ks, flies = _trx_to_flies(td['trx'])
 
     scalarkeys = {'firstframe', 'endframe', 'nframes', 'fps', 'id'}

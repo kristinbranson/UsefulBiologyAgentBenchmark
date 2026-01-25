@@ -107,7 +107,7 @@ end
 
 %% per-frame data
 perframedir = 'perframe';
-for expi = 1:nexps,
+for expi = [34:nexps,1:33],
   fprintf('%d/%d\n',expi,nexps);
   expdirin = expdirsin{expi};
   expdirout = expdirsout{expi};
@@ -141,6 +141,7 @@ for expi = 1:nexps,
       off = tdin.trx(fly).nframes - numel(inpd.data{fly});
       outpd.data{fly} = inpd.data{fly}(1:j1-off);
     end
+    outpd.data = outpd.data(dokeep);
     save(outfile,'-struct','outpd');
   end
 end
